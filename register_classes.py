@@ -5,3 +5,10 @@ register_classes(
     BLACS_tab='naqslab_devices.prawn_do.blacs_tabs.PrawnDOTab',
     runviewer_parser=None,
 )
+
+
+register_classes(
+    'PrawnDOTrig',
+    BLACS_tab='naqslab_devices.prawn_do.blacs_tabs.PrawnDOTab',
+    runviewer_parser=None,
+)
