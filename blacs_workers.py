@@ -65,6 +65,12 @@ class PrawnDOInterface(object):
         Returns response, throws serial exception on disconnect.'''
         self.conn.write(b'cur\n')
         return self.conn.read_until(b'> ')
+    
+    def version(self):
+        '''Sends 'run' command, which starts the current run.
+        Returns response, throws serial exception on disconnect.'''
+        self.conn.write(b'ver\n')
+        return self.conn.read_until(b'> ')
 
     def add(self, bit_set, reps):
         '''Sends 'add' command for a single set of output bits
