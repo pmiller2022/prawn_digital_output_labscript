@@ -1,12 +1,12 @@
-from labscript import IntermediateDevice, DigitalOut, bitfield, set_passed_properties, Output, compiler, LabscriptError
+from labscript import IntermediateDevice, DigitalOut, bitfield, set_passed_properties, Output, compiler, LabscriptError, TriggerableDevice
 import numpy as np
 
 class Pod(Output):
     allowed_children = [DigitalOut]
 
-    def __init__(self, name, parent_device, default_value, **kwargs):
+    def __init__(self, name, parent_device, connection, default_value, **kwargs):
 
-        Output.__init__(self, name, parent_device, None, None, None, None, default_value, **kwargs)
+        Output.__init__(self, name, parent_device, connection, None, None, None, default_value, **kwargs)
         
 
 
@@ -72,12 +72,20 @@ class PrawnDO(IntermediateDevice):
     )
 
 
-
     def __init__(self, name, parent_device, com_port, **kwargs):
 
         IntermediateDevice.__init__(self, name, parent_device, **kwargs)
 
+        self.pod = Pod('pod', self, 'internal', 0)
+
         self.BLACS_connection = 'PrawnDO: {}'.format(name)
+
+    def add_device(self, device):
+        if isinstance(device, DigitalOut):
+            (self.pod).add_device(device)
+        else:
+            IntermediateDevice.add_device(self, device)
+
 
 
     def generate_code(self, hdf5_file):
@@ -121,15 +129,19 @@ class PrawnDO(IntermediateDevice):
         for wait in compiler.wait_table: 
             # Finding where the wait fits within the times array
             index = np.searchsorted(times, wait)
+            if index > 0:
             # Inserting the wait into the output word table and the reps table
-            do_table = np.insert(do_table, index, 0)
+                do_table = np.insert(do_table, index, do_table[index - 1])
+            else:
+                do_table = np.insert(do_table, index, 0)
+
             reps = np.insert(reps, index, 0)
 
         # Raising an error if the user adds too many commands, currently maxed 
         # at 23000
-        if reps.size > 23001:
+        if reps.size > 23010:
             raise LabscriptError (
-                f"Too Many Commands"
+                "Too Many Commands"
             )
 
         group = hdf5_file['devices'].require_group(self.name)
@@ -137,4 +149,88 @@ class PrawnDO(IntermediateDevice):
         # be used by the blacs worker to execute the sequence
         group.create_dataset('do_data', data=do_table)
         group.create_dataset('reps_data', data=reps)
+        group.create_dataset('times_data', data=times)
+
+
+class PrawnDOTrig(TriggerableDevice):
+    allowed_children = [Pod, DigitalOut]
+
+    def __init__(self, name, parent_device, com_port, **kwargs):
+
+        TriggerableDevice.__init__(self, name, parent_device, com_port, **kwargs)
+
+        self.pod = Pod('pod', self, 'internal', 0)
+
+        self.BLACS_connection = 'PrawnDO: {}'.format(name)
+
+    def add_device(self, device):
+        if isinstance(device, DigitalOut):
+            (self.pod).add_device(device)
+        else:
+            TriggerableDevice.add_device(self, device)
+
+    def generate_code(self, hdf5_file):
+        TriggerableDevice.generate_code(self, hdf5_file)
+
+        # Creating a numpy array to take the times from the digital outputs
+        # where the program needs to change the output
+        times = []
+        times = np.asarray(times)
+        bits = [0] * 16 # Start with a list of 16 zeros
+        # Isolating the Pod child device in order to access the output change 
+        # times to store in the array
+        for line in self.child_devices:
+            if isinstance(line, Pod):
+                # Retrieving all of the outputs contained within the pods and
+                # collecting/consolidating the times when they change
+                outputs = line.get_all_children()
+                times = line.get_update_times()
+                for output in outputs:
+                    # Retrieving the time series of each DigitalOut to be stored
+                    # as the output word for shifting to the pins
+                    output.make_timeseries(output.get_change_times())
+                    bits[int(output.connection, 16)] = np.asarray(output.timeseries, dtype = np.uint16)
+        # Merge list of lists into an array with a single 16 bit integer column
+        do_table = np.array(bitfield(bits, dtype=np.uint16))
+
+        # Making an array to store the number of reps needed for each output
+        # word
+        reps = []
+        reps = np.asarray(reps, dtype = int)
+
+        # Looping through each entry in the times array to calculate the number
+        # of 10ns reps between each output word
+        for i in range(1, times.size):
+            reps = np.append(reps, (int)(round((times[i] - times[i - 1]) / 10e-9)))
+        
+        reps = np.append(reps, 0)
+
+        # Looping through the waits given by the compiler's wait table to add 
+        # the wait instructions
+        for wait in compiler.wait_table: 
+            # Finding where the wait fits within the times array
+            index = np.searchsorted(times, wait)
+            if index > 0:
+            # Inserting the wait into the output word table and the reps table
+                do_table = np.insert(do_table, index, do_table[index - 1])
+            else:
+                do_table = np.insert(do_table, index, 0)
+
+            reps = np.insert(reps, index, 0)
+
+        # Raising an error if the user adds too many commands, currently maxed 
+        # at 23000
+        if reps.size > 23010:
+            raise LabscriptError (
+                "Too Many Commands"
+            )
+
+        group = hdf5_file['devices'].require_group(self.name)
+        # Adding the output word table and the reps table to the hdf5 file to
+        # be used by the blacs worker to execute the sequence
+        group.create_dataset('do_data', data=do_table)
+        group.create_dataset('reps_data', data=reps)
+        group.create_dataset('times_data', data=times)
+    
+
     
