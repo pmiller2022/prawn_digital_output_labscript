@@ -4,6 +4,8 @@ This program allows the [Prawn Digital Output](https://github.com/pmiller2022/pr
 
 The default PrawnDO takes a PseudoclockDevice as a parent and uses that as a trigger and to control. The LabscriptDevices code also contains a PrawnDOTrig which takes a DigitalOut or a trigger as a parent device.
 
+Runviewer Parser not currently supported for PrawnDOTrig device
+
 ## Example Connection Table
 <img width="628" alt="conn_table" src="https://github.com/pmiller2022/prawn_digital_output_labscript/assets/75953337/e2b42a52-4413-4708-b5bd-46628bacdf07">
 
