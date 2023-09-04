@@ -77,11 +77,7 @@ class PrawnDOInterface(object):
         Returns response, throws serial exception on disconnect.'''
         self.conn.write('add\n'.encode())
         self.conn.write('0x{:04x} '.format(bit_set).encode())
-        if reps == 0:
-            self.conn.write('0x{:08x} '.format(reps).encode())
-            self.conn.write('1\n'.encode())
-        else:
-            self.conn.write('0x{:08x}\n'.format(reps).encode())
+        self.conn.write('0x{:08x}\n'.format(reps).encode())
         self.conn.write('end\n'.encode())
         return self.conn.read_until(b'> ')
     
@@ -99,12 +95,8 @@ class PrawnDOInterface(object):
         '''Sends 'add' commands for each bit_set in bit_sets list. Returns response.'''
         self.conn.write('add\n'.encode())
         for i in range(0, len(reps)):
-            self.conn.write('0x{:04x} '.format(bit_sets[i]).encode())
-            if reps == 0:
-                self.conn.write('0x{:08x} '.format(reps[i]).encode())
-                self.conn.write('1\n'.encode())
-            else:
-                self.conn.write('0x{:08x}\n'.format(reps[i]).encode())
+            self.conn.write('0x{:04x} '.format(bit_sets[i]).encode()) 
+            self.conn.write('0x{:08x}\n'.format(reps[i]).encode())
         self.conn.write('end\n'.encode())
         return self.conn.read_until(b'> ')
 
