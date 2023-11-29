@@ -14,14 +14,14 @@ class PrawnDOTab(DeviceTab):
 
         self.com_port = device.properties['com_port']
 
-        self.supports_remote_value_check(False)
-        self.supports_smart_programming(False)
+        self.supports_remote_value_check(True)
+        self.supports_smart_programming(True)
 
 
     def initialise_workers(self):
         self.create_worker(
             "main_worker",
-            "naqslab_devices.prawn_do.blacs_workers.PrawnDOWorker",
+            "naqslab_devices.prawn_digital_output_labscript.blacs_workers.PrawnDOWorker",
             {
                 'com_port': self.com_port,
             },
