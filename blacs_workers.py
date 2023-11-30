@@ -199,14 +199,19 @@ class PrawnDOWorker(Worker):
         Returns:
             bool: `True` if transition to manual is successful.
         """
+        i = 0
         while True:
             run_status, _ = self.intf.status()
+            i += 1
             if run_status == 0:
-                break
+                return True
+            elif i == 1000:
+                # program hasn't ended, probably bad triggering
+                # abort and raise an error
+                self.abort_buffered()
+                raise LabscriptError(f'PrawnDO did not end with status {run_status:d}. Is triggering working?')
             elif run_status in [3,4,5]:
                 raise LabscriptError(f'PrawnDO returned status {run_status} in transition to manual')
-            
-        return True
 
     def abort_buffered(self):
         """Aborts a currently running buffered execution.
