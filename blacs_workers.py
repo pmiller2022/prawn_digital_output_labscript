@@ -168,6 +168,9 @@ class PrawnDOWorker(Worker):
 
         with h5py.File(h5file, 'r') as hdf5_file:
             group = hdf5_file['devices'][device_name]
+            if 'do_data' not in group:
+                # if no output command, return
+                return
             self.device_properties = labscript_utils.properties.get(
                 hdf5_file, device_name, "device_properties")
             do_table = group['do_data'][()]
@@ -178,13 +181,25 @@ class PrawnDOWorker(Worker):
         freq = self.device_properties['clock_frequency']
         self.intf.send_command_ok(f"clk {ext:d} {freq:.0f}")
             
-        # only program if things differ from smart cache
-        if not (np.array_equal(do_table, self.smart_cache['do_table']) and
-                np.array_equal(reps, self.smart_cache['reps'])):
+        # if fresh or not smart cache, program full table as a batch
+        # this is faster than going line by line
+        if fresh or self.smart_cache['do_table'] is None:
+            print('programming from scratch')
             self.intf.send_command_ok('cls') # clear old program
             self.intf.add_batch(do_table, reps)
             self.smart_cache['do_table'] = do_table
             self.smart_cache['reps'] = reps
+        else:
+            print('incremental programming')
+            # only program table lines that have changed
+            for i, (output, rep) in enumerate(zip(do_table, reps)):
+                if (self.smart_cache['do_table'][i] != output or
+                    self.smart_cache['reps'][i] != rep):
+
+                    print(f'programming step {i}')
+                    self.intf.send_command_ok(f'set {i:x} {output:x} {rep:x}')
+                    self.smart_cache['do_table'][i] = output
+                    self.smart_cache['reps'][i] = rep
 
         final_values = self._int_to_dict(do_table[-1])
 
