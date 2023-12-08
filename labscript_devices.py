@@ -1,11 +1,64 @@
-from labscript import IntermediateDevice, DigitalOut, bitfield, set_passed_properties, Output, compiler, LabscriptError, TriggerableDevice
+from labscript import (
+    IntermediateDevice,
+    PseudoclockDevice,
+    Pseudoclock,
+    Clockline,
+    DigitalOut,
+    bitfield,
+    set_passed_properties,
+    Output,
+    compiler,
+    LabscriptError
+)
 import numpy as np
 
-class Pod(Output):
+class _PrawnDODummyPseudoclock(Pseudoclock):
+    """Dummy pseudoclock for use with PrawnDO.
+    
+    This pseudoclock ensures only one clockline is attached.
+    """
+
+    def add_device(self, device):
+
+        if not isinstance(device, _PrawnDODummyClockline) or self.child_devices:
+            # only allow one child dummy clockline
+            raise LabscriptError("You are trying to access the special, dummy, Pseudoclock of the PrawnDO "
+                                    f"{self.parent_device.name}. This is for internal use only.")
+        else:
+            Pseudoclock.add_device(self, device)
+
+    
+    def generate_code(self, *args, **kwargs):
+        # do nothing, dummy class
+        pass
+
+
+class _PrawnDODummyClockline(Clockline):
+    """Dummy clockline for use with PrawnDO
+    
+    Ensures only a single Pod is connected to the PrawnDO
+    """
+
+    def add_device(self, device):
+
+        if not isinstance(device, _Pod) or self.child_devices:
+            # only allow one child Pod device
+            raise LabscriptError("You are trying to access the special, dummy, Clockline of the PrawnDO "
+                                    f"{self.pseudoclock_device.name}. This is for internal use only.")
+        else:
+            Clockline.add_device(self, device)
+
+
+    def generate_code(self, *args, **kwargs):
+        # do nothing, dummy class
+        pass
+
+
+class _Pod(IntermediateDevice):
     allowed_children = [DigitalOut]
 
     def __init__(self, name, parent_device, min_duration,
-                 connection='internal', **kwargs):
+                 **kwargs):
         """Collective output class for the PrawnDO.
         
         This class aggregates the 16 individual digital outputs of the PrawnDO.
@@ -15,15 +68,10 @@ class Pod(Output):
             name (str): name to assign
             parent_device (Device): Parent device PrawnDO is connected to
             min_duration (float): Minimum time between updates on the outputs, in seconds.
-            connection (str, optional): Connection, ignored by default.
         """
 
         self.min_duration = min_duration
-        Output.__init__(self, name, parent_device, connection,
-                        None, None, None, 0, **kwargs)
-
-    def generate_code(self, hdf5_file):
-        Output.generate_code(self, hdf5_file)
+        IntermediateDevice.__init__(self, name, parent_device, **kwargs)
 
 
     def get_update_times(self):
@@ -76,8 +124,8 @@ class Pod(Output):
         return []
     
 
-class PrawnDO(IntermediateDevice):
-    description = "PrawnDO"
+class PrawnDODevice(PseudoclockDevice):
+    description = "PrawnDO Pseudoclock device"
 
     # default specs assuming 100MHz system clock
     resolution = 10e-9
@@ -86,8 +134,13 @@ class PrawnDO(IntermediateDevice):
     "Minimum time between updates on the outputs."
     wait_delay = 40e-9
     "Minimum required length of wait before a retrigger can be detected."
+    input_response_time = 50e-9
+    "Time between hardware trigger and output starting."
+    trigger_delay = input_response_time
+    trigger_minimum_duration = 160e-9
+    "Minimum required duration of hardware trigger. A fairly large over-estimate."
 
-    allowed_children = [Pod, DigitalOut]
+    allowed_children = [_PrawnDODummyPseudoclock]
 
     max_instructions = 23010
     """Maximum number of instructions. Set by zmq timeout when sending the commands."""
@@ -102,16 +155,22 @@ class PrawnDO(IntermediateDevice):
                 'external_clock',
                 'resolution',
                 'minimum_duration',
+                'input_response_time',
+                'trigger_delay',
+                'trigger_minimum_duration',
                 'wait_delay',
             ]
         }
     )
 
 
-    def __init__(self, name, parent_device, com_port,
+    def __init__(self, name, 
+                 trigger_device = None,
+                 trigger_connection = None,
+                 com_port = 'COM1',
                  clock_frequency = 100e6,
                  external_clock = False,
-                 **kwargs):
+                ):
         """PrawnDO digital output device.
         
         This labscript device provides general purpose digital outputs
@@ -119,8 +178,10 @@ class PrawnDO(IntermediateDevice):
 
         Args:
             name (str): python variable name to assign to the PrawnDO
-            parent_device (:class:`~labscript.Device`): Device that will send the
-                starting hardware trigger.
+            trigger_device (:class:`~labscript.IntermediateDevice`, optional):
+                Device that will send the starting hardware trigger.
+            trigger_connection (str, optional): Which output of the `trigger_device`
+                is connected to the PrawnDO hardware trigger input.
             com_port (str): COM port assinged to the PrawnDO by the OS.
                 Takes the form of `COMd` where `d` is an integer.
             clock_frequency (float, optional): System clock frequency, in Hz.
@@ -141,22 +202,31 @@ class PrawnDO(IntermediateDevice):
             self.resolution *= factor
             self.minimum_duration *= factor
             self.wait_delay *= factor
+            self.input_response_time *= factor
+            self.trigger_delay *= factor
+            self.trigger_minimum_duration *= factor
 
-        IntermediateDevice.__init__(self, name, parent_device, **kwargs)
+        PseudoclockDevice.__init__(self, name, trigger_device, trigger_connection)
 
-        self.pod = Pod('pod', self, self.minimum_duration)
+        # set up internal connections to allow digital outputs
+        self.__dummy_pseudoclock = _PrawnDODummyPseudoclock(f'{name:s}__dummy_pseudoclock', self, '_')
+        self.__dummy_clockline = _PrawnDODummyClockline(f'{name:s}__dummy_clockline',
+                                                        self.__dummy_pseudoclock, '_')
+        self.__pod = _Pod(f'{name:s}__pod', self.__dummy_clockline, self.minimum_duration)
 
         self.BLACS_connection = com_port
 
     def add_device(self, device):
+
         if isinstance(device, DigitalOut):
-            self.pod.add_device(device)
+            self.__pod.add_device(device)
         else:
-            IntermediateDevice.add_device(self, device)
+            raise LabscriptError(f"You have connected unsupported {device.name:s} (class {device.__class__:s}) "
+                                 "to {self.name:s}")
 
 
     def generate_code(self, hdf5_file):
-        IntermediateDevice.generate_code(self, hdf5_file)
+        PseudoclockDevice.generate_code(self, hdf5_file)
 
         bits = [0] * 16 # Start with a list of 16 zeros
         # Isolating the Pod child device in order to access the output change 
@@ -164,8 +234,8 @@ class PrawnDO(IntermediateDevice):
 
         # Retrieving all of the outputs contained within the pods and
         # collecting/consolidating the times when they change
-        outputs = self.pod.get_all_children()
-        times = self.pod.get_update_times()
+        outputs = self.__pod.get_all_children()
+        times = self.__pod.get_update_times()
         if len(times) == 0:
             # no instructions, so return
             return
@@ -210,85 +280,60 @@ class PrawnDO(IntermediateDevice):
         group.create_dataset('reps_data', data=reps)
 
 
-class PrawnDOTrig(TriggerableDevice):
-    allowed_children = [Pod, DigitalOut]
+class PrawnDO(IntermediateDevice):
+    description = "PrawnDO"
 
-    def __init__(self, name, parent_device, com_port, **kwargs):
+    allowed_children = [PrawnDODevice]
 
-        TriggerableDevice.__init__(self, name, parent_device, com_port, **kwargs)
+    @set_passed_properties(
+        property_names={
+            'connection_table_properties': [
+                'com_port',
+            ],
+            'device_properties': [
+                'clock_frequency',
+                'external_clock',
+                'resolution',
+                'minimum_duration',
+                'input_response_time',
+                'trigger_delay',
+                'trigger_minimum_duration',
+                'wait_delay',
+            ]
+        }
+    )
 
-        self.pod = Pod('pod', self, 'internal', 0)
 
-        self.BLACS_connection = 'PrawnDO: {}'.format(name)
-
-    def add_device(self, device):
-        if isinstance(device, DigitalOut):
-            (self.pod).add_device(device)
-        else:
-            TriggerableDevice.add_device(self, device)
-
-    def generate_code(self, hdf5_file):
-        TriggerableDevice.generate_code(self, hdf5_file)
-
-        # Creating a numpy array to take the times from the digital outputs
-        # where the program needs to change the output
-        times = []
-        times = np.asarray(times)
-        bits = [0] * 16 # Start with a list of 16 zeros
-        # Isolating the Pod child device in order to access the output change 
-        # times to store in the array
-        for line in self.child_devices:
-            if isinstance(line, Pod):
-                # Retrieving all of the outputs contained within the pods and
-                # collecting/consolidating the times when they change
-                outputs = line.get_all_children()
-                times = line.get_update_times()
-                for output in outputs:
-                    # Retrieving the time series of each DigitalOut to be stored
-                    # as the output word for shifting to the pins
-                    output.make_timeseries(output.get_change_times())
-                    bits[int(output.connection, 16)] = np.asarray(output.timeseries, dtype = np.uint16)
-        # Merge list of lists into an array with a single 16 bit integer column
-        do_table = np.array(bitfield(bits, dtype=np.uint16))
-
-        # Making an array to store the number of reps needed for each output
-        # word
-        reps = []
-        reps = np.asarray(reps, dtype = int)
-
-        # Looping through each entry in the times array to calculate the number
-        # of 10ns reps between each output word
-        for i in range(1, times.size):
-            reps = np.append(reps, (int)(round((times[i] - times[i - 1]) / 10e-9)))
+    def __init__(self, name, parent_device, com_port,
+                 clock_frequency = 100e6,
+                 external_clock = False,
+                 **kwargs):
+        """PrawnDO digital output device.
         
-        reps = np.append(reps, 0)
+        This labscript device provides general purpose digital outputs
+        using a Raspberry Pi Pico with custom firmware.
 
-        # Looping through the waits given by the compiler's wait table to add 
-        # the wait instructions
-        for wait in compiler.wait_table: 
-            # Finding where the wait fits within the times array
-            index = np.searchsorted(times, wait)
-            if index > 0:
-            # Inserting the wait into the output word table and the reps table
-                do_table = np.insert(do_table, index, do_table[index - 1])
-            else:
-                do_table = np.insert(do_table, index, 0)
+        Args:
+            name (str): python variable name to assign to the PrawnDO
+            parent_device (:class:`~labscript.Device`): Device that will send the
+                starting hardware trigger.
+            com_port (str): COM port assinged to the PrawnDO by the OS.
+                Takes the form of `COMd` where `d` is an integer.
+            clock_frequency (float, optional): System clock frequency, in Hz.
+                Must be less than 133 MHz. Default is `100e6`.
+            external_clock (bool, optional): Whether to use an external clock.
+                Default is `False`.
+        """
+        
+        self.external_clock = external_clock
+        self.clock_frequency = clock_frequency
 
-            reps = np.insert(reps, index, 0)
+        IntermediateDevice.__init__(self, name, parent_device, **kwargs)
 
-        # Raising an error if the user adds too many commands, currently maxed 
-        # at 23000
-        if reps.size > 23010:
-            raise LabscriptError (
-                "Too Many Commands"
-            )
+        self.BLACS_connection = com_port
 
-        group = hdf5_file['devices'].require_group(self.name)
-        # Adding the output word table and the reps table to the hdf5 file to
-        # be used by the blacs worker to execute the sequence
-        group.create_dataset('do_data', data=do_table)
-        group.create_dataset('reps_data', data=reps)
-        group.create_dataset('times_data', data=times)
-    
-
-    
+        self.add_device(PrawnDODevice(f'{name:s}_prawndodevice',
+                                      self, 'internal',
+                                      com_port,
+                                      clock_frequency,
+                                      external_clock))
