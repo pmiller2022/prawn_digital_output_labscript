@@ -192,7 +192,21 @@ class PrawnDOWorker(Worker):
         ext = self.device_properties['external_clock']
         freq = self.device_properties['clock_frequency']
         self.intf.send_command_ok(f"clk {ext:d} {freq:.0f}")
-            
+
+        # check if it is more efficient to fully refresh
+        if not fresh and self.smart_cache['do_table'] is not None:
+            total_inst = len(reps)
+            new_inst = 0
+            for i, (output, rep) in enumerate(zip(do_table, reps)):
+                if i >= len(self.smart_cache['reps']):
+                    new_inst += len(reps) - len(self.smart_cache['reps'])
+                    break
+                elif (self.smart_cache['do_table'][i] != output or
+                    self.smart_cache['reps'][i] != rep):
+                    new_inst += 1
+            if new_inst / total_inst > 0.1:
+                fresh = True
+
         # if fresh or not smart cache, program full table as a batch
         # this is faster than going line by line
         if fresh or self.smart_cache['do_table'] is None:
@@ -205,7 +219,13 @@ class PrawnDOWorker(Worker):
             print('incremental programming')
             # only program table lines that have changed
             for i, (output, rep) in enumerate(zip(do_table, reps)):
-                if (self.smart_cache['do_table'][i] != output or
+                if i >= len(self.smart_cache['reps']):
+                    print(f'programming step {i}')
+                    self.intf.send_command_ok(f'set {i:x} {output:x} {rep:x}')
+                    self.smart_cache['do_table'][i] = output
+                    self.smart_cache['reps'][i] = rep
+
+                elif (self.smart_cache['do_table'][i] != output or
                     self.smart_cache['reps'][i] != rep):
 
                     print(f'programming step {i}')
