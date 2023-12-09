@@ -9,6 +9,7 @@ import time
 class PrawnDOInterface(object):
     def __init__(self, com_port):
         global serial; import serial
+        global struct; import struct
 
         self.timeout = 0.5
         self.conn = serial.Serial(com_port, 10000000, timeout=self.timeout)
@@ -71,6 +72,17 @@ class PrawnDOInterface(object):
             self.conn.write('{:04x} '.format(bit_sets[i]).encode()) 
             self.conn.write('{:08x}\n'.format(reps[i]).encode())
         self.conn.write('end\n'.encode())
+        resp = self.conn.readline().decode()
+        assert resp == 'ok\r\n', f'Program not written successfully, got response {resp}'
+
+    def adm_batch(self, bit_sets, reps):
+        '''Sends an 'adm' command for each bit_set in bit_sets list. Returns response.'''
+        self.conn.write('adm {:04x}\n'.format(len(reps)).encode())
+        serial_buffer = b''
+        for i in range(0, len(reps)):
+            serial_buffer += struct.pack('<H', bit_sets[i])
+            serial_buffer += struct.pack('<I', reps[i])
+        self.conn.write(serial_buffer)
         resp = self.conn.readline().decode()
         assert resp == 'ok\r\n', f'Program not written successfully, got response {resp}'
 
@@ -186,7 +198,7 @@ class PrawnDOWorker(Worker):
         if fresh or self.smart_cache['do_table'] is None:
             print('programming from scratch')
             self.intf.send_command_ok('cls') # clear old program
-            self.intf.add_batch(do_table, reps)
+            self.intf.adm_batch(do_table, reps)
             self.smart_cache['do_table'] = do_table
             self.smart_cache['reps'] = reps
         else:
