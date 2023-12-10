@@ -222,7 +222,7 @@ class PrawnDODevice(PseudoclockDevice):
             self.__pod.add_device(device)
         else:
             raise LabscriptError(f"You have connected unsupported {device.name:s} (class {device.__class__:s}) "
-                                 "to {self.name:s}")
+                                 f"to {self.name:s}")
 
 
     def generate_code(self, hdf5_file):
@@ -337,3 +337,14 @@ class PrawnDO(IntermediateDevice):
                                       com_port,
                                       clock_frequency,
                                       external_clock))
+        
+    def add_device(self, device):
+
+        if isinstance(device, DigitalOut):
+            # pass Digital Outputs to PrawnDODevice
+            self.child_devices[0].add_device(device)
+        elif isinstance(PrawnDODevice) and not self.child_devices:
+            self.add_device(device)
+        else:
+            raise LabscriptError(f"You have connected unsupported {device.name:s} (class {device.__class__:s}) "
+                                 f"to {self.name:s}")
