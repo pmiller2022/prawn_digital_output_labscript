@@ -2,11 +2,11 @@ from labscript import (
     IntermediateDevice,
     PseudoclockDevice,
     Pseudoclock,
-    Clockline,
+    ClockLine,
     DigitalOut,
+    Trigger,
     bitfield,
     set_passed_properties,
-    Output,
     compiler,
     LabscriptError
 )
@@ -33,7 +33,7 @@ class _PrawnDODummyPseudoclock(Pseudoclock):
         pass
 
 
-class _PrawnDODummyClockline(Clockline):
+class _PrawnDODummyClockline(ClockLine):
     """Dummy clockline for use with PrawnDO
     
     Ensures only a single Pod is connected to the PrawnDO
@@ -46,7 +46,7 @@ class _PrawnDODummyClockline(Clockline):
             raise LabscriptError("You are trying to access the special, dummy, Clockline of the PrawnDO "
                                     f"{self.pseudoclock_device.name}. This is for internal use only.")
         else:
-            Clockline.add_device(self, device)
+            ClockLine.add_device(self, device)
 
 
     def generate_code(self, *args, **kwargs):
@@ -128,7 +128,9 @@ class PrawnDODevice(PseudoclockDevice):
     description = "PrawnDO Pseudoclock device"
 
     # default specs assuming 100MHz system clock
-    resolution = 10e-9
+    clock_limit = 1 / 100e-9
+    "Maximum allowable clock rate"
+    clock_resolution = 10e-9
     "Minimum resolvable unit of time, corresponsd to system clock period."
     minimum_duration = 50e-9
     "Minimum time between updates on the outputs."
@@ -153,7 +155,8 @@ class PrawnDODevice(PseudoclockDevice):
             'device_properties': [
                 'clock_frequency',
                 'external_clock',
-                'resolution',
+                'clock_limit',
+                'clock_resolution',
                 'minimum_duration',
                 'input_response_time',
                 'trigger_delay',
@@ -199,7 +202,8 @@ class PrawnDODevice(PseudoclockDevice):
         if self.clock_frequency != 100e6:
             # factor to scale times by
             factor = 100e6/self.clock_frequency
-            self.resolution *= factor
+            self.clock_limit *= factor
+            self.clock_resolution *= factor
             self.minimum_duration *= factor
             self.wait_delay *= factor
             self.input_response_time *= factor
@@ -220,8 +224,10 @@ class PrawnDODevice(PseudoclockDevice):
 
         if isinstance(device, DigitalOut):
             self.__pod.add_device(device)
+        elif isinstance(device, _PrawnDODummyPseudoclock):
+            super().add_device(device)
         else:
-            raise LabscriptError(f"You have connected unsupported {device.name:s} (class {device.__class__:s}) "
+            raise LabscriptError(f"You have connected unsupported {device.name:s} (class {device.__class__}) "
                                  f"to {self.name:s}")
 
 
@@ -249,7 +255,7 @@ class PrawnDODevice(PseudoclockDevice):
         do_table = np.array(bitfield(bits, dtype=np.uint16))
 
         # Now create the reps array (ie times between changes in number of clock cycles)
-        reps = np.rint(np.diff(times)/self.resolution).astype(np.uint32)
+        reps = np.rint(np.diff(times)/self.clock_resolution).astype(np.uint32)
         
         # add stop command sequence
         reps = np.append(reps, 0) # causes last instruction to hold
@@ -279,11 +285,14 @@ class PrawnDODevice(PseudoclockDevice):
         group.create_dataset('do_data', data=do_table)
         group.create_dataset('reps_data', data=reps)
 
+        print('do_data: ', do_table)
+        print('reps: ', reps)
+
 
 class PrawnDO(IntermediateDevice):
     description = "PrawnDO"
 
-    allowed_children = [PrawnDODevice]
+    allowed_children = [Trigger]
 
     @set_passed_properties(
         property_names={
@@ -293,17 +302,9 @@ class PrawnDO(IntermediateDevice):
             'device_properties': [
                 'clock_frequency',
                 'external_clock',
-                'resolution',
-                'minimum_duration',
-                'input_response_time',
-                'trigger_delay',
-                'trigger_minimum_duration',
-                'wait_delay',
             ]
         }
     )
-
-
     def __init__(self, name, parent_device, com_port,
                  clock_frequency = 100e6,
                  external_clock = False,
@@ -332,19 +333,22 @@ class PrawnDO(IntermediateDevice):
 
         self.BLACS_connection = com_port
 
-        self.add_device(PrawnDODevice(f'{name:s}_prawndodevice',
-                                      self, 'internal',
-                                      com_port,
-                                      clock_frequency,
-                                      external_clock))
+        self._prawn_device = PrawnDODevice(f'{name:s}_device',
+                                           self, 'internal',
+                                           com_port,
+                                           clock_frequency,
+                                           external_clock)
         
     def add_device(self, device):
 
-        if isinstance(device, DigitalOut):
+        if isinstance(device, Trigger):
+            # swallow the Trigger line for the PrawnDODevice
+            print(f'adding trigger {device.name:s}')
+            super().add_device(device)
+        elif isinstance(device, DigitalOut):
             # pass Digital Outputs to PrawnDODevice
-            self.child_devices[0].add_device(device)
-        elif isinstance(PrawnDODevice) and not self.child_devices:
-            self.add_device(device)
+            self._prawn_device.add_device(device)
+            print(f'DigitalOut {device.name:s} added')
         else:
-            raise LabscriptError(f"You have connected unsupported {device.name:s} (class {device.__class__:s}) "
+            raise LabscriptError(f"You have connected unsupported {device.name:s} (class {device.__class__}) "
                                  f"to {self.name:s}")
