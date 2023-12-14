@@ -329,11 +329,9 @@ class PrawnDO(IntermediateDevice):
         self.external_clock = external_clock
         self.clock_frequency = clock_frequency
 
-        IntermediateDevice.__init__(self, name, parent_device, **kwargs)
+        IntermediateDevice.__init__(self, f'{name:s}_dummy_parent', parent_device, **kwargs)
 
-        self.BLACS_connection = com_port
-
-        self._prawn_device = PrawnDODevice(f'{name:s}_device',
+        self._prawn_device = PrawnDODevice(f'{name:s}',
                                            self, 'internal',
                                            com_port,
                                            clock_frequency,
