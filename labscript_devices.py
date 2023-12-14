@@ -36,7 +36,7 @@ class _PrawnDOClockline(ClockLine):
 
     def add_device(self, device):
 
-        if not isinstance(device, _PrawnDODirectOutputs) or self.child_devices:
+        if not isinstance(device, _PrawnDigitalOutputs) or self.child_devices:
             # only allow one child device
             raise LabscriptError("You are trying to access the special, dummy, Clockline of the PrawnDO "
                                     f"{self.pseudoclock_device.name}. This is for internal use only.")
@@ -44,8 +44,13 @@ class _PrawnDOClockline(ClockLine):
             ClockLine.add_device(self, device)
 
 
-class _PrawnDODirectOutputs(IntermediateDevice):
+class _PrawnDigitalOutputs(IntermediateDevice):
     allowed_children = [DigitalOut]
+
+    allowed_channels = ('0', '1', '2', '3',
+                        '4', '5', '6', '7',
+                        '8', '9', 'A', 'B',
+                        'C', 'D', 'E', 'F')
 
     def __init__(self, name, parent_device,
                  **kwargs):
@@ -60,6 +65,27 @@ class _PrawnDODirectOutputs(IntermediateDevice):
         """
 
         IntermediateDevice.__init__(self, name, parent_device, **kwargs)
+        self.connected_channels = []
+
+    def add_device(self, device):
+        """Confirms channel specified is valid before adding
+        
+        Args:
+            device (): Device to attach. Must be a digital output.
+                Allowed connections are a string that ends with a 0-F hex
+                channel number.
+        """
+
+        conn = device.connection
+        chan = conn.split(' ')[-1]
+
+        if chan not in self.allowed_channels:
+            raise LabscriptError(f'Invalid channel specification: {conn}')
+        if chan in self.connected_channels:
+            raise LabscriptError(f'Channel {conn} already connected to {self.parent_device.name}')
+        
+        self.connected_channels.append(chan)
+        super().add_device(device)
     
 
 class PrawnDODevice(PseudoclockDevice):
@@ -152,7 +178,7 @@ class PrawnDODevice(PseudoclockDevice):
         self.__pseudoclock = _PrawnDOPseudoclock(f'{name:s}__pseudoclock', self, '_')
         self.__clockline = _PrawnDOClockline(f'{name:s}__clockline',
                                              self.__pseudoclock, '_')
-        self.outputs = _PrawnDODirectOutputs(f'{name:s}__pod', self.__clockline)
+        self.outputs = _PrawnDigitalOutputs(f'{name:s}__pod', self.__clockline)
 
         self.BLACS_connection = com_port
 
@@ -187,7 +213,8 @@ class PrawnDODevice(PseudoclockDevice):
             # Retrieving the time series of each DigitalOut to be stored
             # as the output word for shifting to the pins
             output.make_timeseries(times)
-            bits[int(output.connection, 16)] = np.asarray(output.timeseries, dtype = np.uint16)
+            chan = output.connection.split(' ')[-1]
+            bits[int(chan, 16)] = np.asarray(output.timeseries, dtype = np.uint16)
         # Merge list of lists into an array with a single 16 bit integer column
         do_table = np.array(bitfield(bits, dtype=np.uint16))
 
@@ -274,7 +301,7 @@ class PrawnDO(IntermediateDevice):
     def add_device(self, device):
 
         if isinstance(device, Trigger):
-            # swallow the Trigger line for the PrawnDODevice
+            # the internal Trigger line for the PrawnDODevice
             super().add_device(device)
         elif isinstance(device, DigitalOut):
             # pass Digital Outputs to PrawnDODevice
