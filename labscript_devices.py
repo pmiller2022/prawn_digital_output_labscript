@@ -12,7 +12,7 @@ from labscript import (
 )
 import numpy as np
 
-class _PrawnDODummyPseudoclock(Pseudoclock):
+class _PrawnDOPseudoclock(Pseudoclock):
     """Dummy pseudoclock for use with PrawnDO.
     
     This pseudoclock ensures only one clockline is attached.
@@ -20,44 +20,34 @@ class _PrawnDODummyPseudoclock(Pseudoclock):
 
     def add_device(self, device):
 
-        if not isinstance(device, _PrawnDODummyClockline) or self.child_devices:
+        if not isinstance(device, _PrawnDOClockline) or self.child_devices:
             # only allow one child dummy clockline
             raise LabscriptError("You are trying to access the special, dummy, Pseudoclock of the PrawnDO "
                                     f"{self.parent_device.name}. This is for internal use only.")
         else:
             Pseudoclock.add_device(self, device)
 
-    
-    def generate_code(self, *args, **kwargs):
-        # do nothing, dummy class
-        pass
 
-
-class _PrawnDODummyClockline(ClockLine):
+class _PrawnDOClockline(ClockLine):
     """Dummy clockline for use with PrawnDO
     
-    Ensures only a single Pod is connected to the PrawnDO
+    Ensures only a single _PrawnDODirectOutputs is connected to the PrawnDO
     """
 
     def add_device(self, device):
 
-        if not isinstance(device, _Pod) or self.child_devices:
-            # only allow one child Pod device
+        if not isinstance(device, _PrawnDODirectOutputs) or self.child_devices:
+            # only allow one child device
             raise LabscriptError("You are trying to access the special, dummy, Clockline of the PrawnDO "
                                     f"{self.pseudoclock_device.name}. This is for internal use only.")
         else:
             ClockLine.add_device(self, device)
 
 
-    def generate_code(self, *args, **kwargs):
-        # do nothing, dummy class
-        pass
-
-
-class _Pod(IntermediateDevice):
+class _PrawnDODirectOutputs(IntermediateDevice):
     allowed_children = [DigitalOut]
 
-    def __init__(self, name, parent_device, min_duration,
+    def __init__(self, name, parent_device,
                  **kwargs):
         """Collective output class for the PrawnDO.
         
@@ -67,61 +57,9 @@ class _Pod(IntermediateDevice):
         Args:
             name (str): name to assign
             parent_device (Device): Parent device PrawnDO is connected to
-            min_duration (float): Minimum time between updates on the outputs, in seconds.
         """
 
-        self.min_duration = min_duration
         IntermediateDevice.__init__(self, name, parent_device, **kwargs)
-
-
-    def get_update_times(self):
-        """Overridden method that collects and condenses update times across all 16 outputs."""
-        # TODO: this is very fragile to timing edge cases
-        # Creating a sorted numpy array to store the update times
-        update_times = []
-        update_times = np.asarray(update_times)
-        # Looping through each output to add their unique update times to the
-        # sorted array
-        for output in self.child_devices:
-            # do checks on instructions, ensures all outputs have a default state
-            output.do_checks((0,))
-            # Checking each update time of each output to see if it is unique
-            # enough (>= 50ns difference compared to other times)
-            for time in output.get_change_times():
-                # First check if the time is already in the update times array
-                if time not in update_times:
-                    # If the array is empty, add this time to it
-                    if update_times.size == 0:
-                        update_times = np.append(update_times, time)
-                    # If this time is greater than the greatest value currently
-                    # in the list, just check to make sure its greater by 50ns
-                    # and if it is, append to the array
-                    elif update_times[-1] < time:
-                        if (time - update_times[-1] >= self.min_duration):
-                            update_times = np.append(update_times, time) 
-                    # If this time is less than the smallest value in the list,
-                    # just check that it's smaller by at least 50 ns, then 
-                    # insert at the beginning of the array
-                    elif update_times[0] > time:
-                        if (update_times[0] - time >= self.min_duration):
-                            update_times = np.insert(update_times, 0, time)   
-                    # If the time is located not at the beginning or end,
-                    # check both the greater and lesser values, and if the
-                    # difference between both value is greater than 50ns,
-                    # insert between those two existing time values                         
-                    else: 
-                        index = np.searchsorted(update_times, time)
-                        if ((time - update_times[index - 1] >= self.min_duration) 
-                            and (update_times[index] - time >= self.min_duration)):
-                            
-                            update_times = np.insert(update_times, index, time)
-                    
-        return update_times
-
-    def get_all_outputs(self):
-        """Overridden in order to prevent parent Pseudoclock from ticking
-        for each output's change of state"""
-        return []
     
 
 class PrawnDODevice(PseudoclockDevice):
@@ -142,9 +80,9 @@ class PrawnDODevice(PseudoclockDevice):
     trigger_minimum_duration = 160e-9
     "Minimum required duration of hardware trigger. A fairly large over-estimate."
 
-    allowed_children = [_PrawnDODummyPseudoclock]
+    allowed_children = [_PrawnDOPseudoclock]
 
-    max_instructions = 23010
+    max_instructions = 30000
     """Maximum number of instructions. Set by zmq timeout when sending the commands."""
 
     @set_passed_properties(
@@ -165,8 +103,6 @@ class PrawnDODevice(PseudoclockDevice):
             ]
         }
     )
-
-
     def __init__(self, name, 
                  trigger_device = None,
                  trigger_connection = None,
@@ -213,19 +149,19 @@ class PrawnDODevice(PseudoclockDevice):
         PseudoclockDevice.__init__(self, name, trigger_device, trigger_connection)
 
         # set up internal connections to allow digital outputs
-        self.__dummy_pseudoclock = _PrawnDODummyPseudoclock(f'{name:s}__dummy_pseudoclock', self, '_')
-        self.__dummy_clockline = _PrawnDODummyClockline(f'{name:s}__dummy_clockline',
-                                                        self.__dummy_pseudoclock, '_')
-        self.__pod = _Pod(f'{name:s}__pod', self.__dummy_clockline, self.minimum_duration)
+        self.__pseudoclock = _PrawnDOPseudoclock(f'{name:s}__pseudoclock', self, '_')
+        self.__clockline = _PrawnDOClockline(f'{name:s}__clockline',
+                                             self.__pseudoclock, '_')
+        self.outputs = _PrawnDODirectOutputs(f'{name:s}__pod', self.__clockline)
 
         self.BLACS_connection = com_port
 
     def add_device(self, device):
 
-        if isinstance(device, DigitalOut):
-            self.__pod.add_device(device)
-        elif isinstance(device, _PrawnDODummyPseudoclock):
+        if isinstance(device, _PrawnDOPseudoclock):
             super().add_device(device)
+        elif isinstance(device, DigitalOut):
+            raise LabscriptError(f"Digital outputs must be connected to {self.name:s}.outputs")
         else:
             raise LabscriptError(f"You have connected unsupported {device.name:s} (class {device.__class__}) "
                                  f"to {self.name:s}")
@@ -240,8 +176,9 @@ class PrawnDODevice(PseudoclockDevice):
 
         # Retrieving all of the outputs contained within the pods and
         # collecting/consolidating the times when they change
-        outputs = self.__pod.get_all_children()
-        times = self.__pod.get_update_times()
+        outputs = self.get_all_outputs()
+        times = self.__pseudoclock.times[self.__clockline]
+
         if len(times) == 0:
             # no instructions, so return
             return
@@ -284,9 +221,6 @@ class PrawnDODevice(PseudoclockDevice):
         # be used by the blacs worker to execute the sequence
         group.create_dataset('do_data', data=do_table)
         group.create_dataset('reps_data', data=reps)
-
-        print('do_data: ', do_table)
-        print('reps: ', reps)
 
 
 class PrawnDO(IntermediateDevice):
@@ -341,12 +275,11 @@ class PrawnDO(IntermediateDevice):
 
         if isinstance(device, Trigger):
             # swallow the Trigger line for the PrawnDODevice
-            print(f'adding trigger {device.name:s}')
             super().add_device(device)
         elif isinstance(device, DigitalOut):
             # pass Digital Outputs to PrawnDODevice
+            # this really shouldn't be used
             self._prawn_device.add_device(device)
-            print(f'DigitalOut {device.name:s} added')
         else:
             raise LabscriptError(f"You have connected unsupported {device.name:s} (class {device.__class__}) "
                                  f"to {self.name:s}")
