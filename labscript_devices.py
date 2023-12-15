@@ -88,8 +88,8 @@ class _PrawnDigitalOutputs(IntermediateDevice):
         super().add_device(device)
     
 
-class PrawnDODevice(PseudoclockDevice):
-    description = "PrawnDO Pseudoclock device"
+class PrawnDO(PseudoclockDevice):
+    description = "PrawnDO device"
 
     # default specs assuming 100MHz system clock
     clock_limit = 1 / 100e-9
@@ -132,6 +132,7 @@ class PrawnDODevice(PseudoclockDevice):
     def __init__(self, name, 
                  trigger_device = None,
                  trigger_connection = None,
+                 clock_line = None,
                  com_port = 'COM1',
                  clock_frequency = 100e6,
                  external_clock = False,
@@ -141,12 +142,24 @@ class PrawnDODevice(PseudoclockDevice):
         This labscript device provides general purpose digital outputs
         using a Raspberry Pi Pico with custom firmware.
 
+        It supports two types of connections to a parent device:
+        direct to a :class:`~.Clockline` via the `clock_line` argument or
+        through a :class:`~.Trigger` from an :class:`~.IntermediateDevice`
+        via the `trigger_device` and `trigger_connection` arguments.
+        Only one should be supplied.
+
+
         Args:
             name (str): python variable name to assign to the PrawnDO
-            trigger_device (:class:`~labscript.IntermediateDevice`, optional):
+            trigger_device (:class:`~.IntermediateDevice`, optional):
                 Device that will send the starting hardware trigger.
+                Used when connecting to an `IntermediateDevice` via a `DigitalOut`.
             trigger_connection (str, optional): Which output of the `trigger_device`
                 is connected to the PrawnDO hardware trigger input.
+                Not required when directly connected to a `Clockline`.
+            clock_line (:class:`~.Clockline`, optional):
+                Used when connected directly to a `Clockline`.
+                Not required if using a trigger device.
             com_port (str): COM port assinged to the PrawnDO by the OS.
                 Takes the form of `COMd` where `d` is an integer.
             clock_frequency (float, optional): System clock frequency, in Hz.
@@ -172,7 +185,16 @@ class PrawnDODevice(PseudoclockDevice):
             self.trigger_delay *= factor
             self.trigger_minimum_duration *= factor
 
-        PseudoclockDevice.__init__(self, name, trigger_device, trigger_connection)
+        if clock_line is not None and trigger_device is not None:
+            raise LabscriptError("Provide only a trigger_device or a clock_line, not both")
+        if clock_line is not None:
+            # make internal Intermediate device and trigger to connect it
+            self.__intermediate = _PrawnDOIntermediateDevice(f'{name:s}__intermediate',
+                                                             clock_line)
+            PseudoclockDevice.__init__(self, name, self.__intermediate, 'internal')
+        else:
+            # normal pseudoclock device triggering
+            PseudoclockDevice.__init__(self, name, trigger_device, trigger_connection)
 
         # set up internal connections to allow digital outputs
         self.__pseudoclock = _PrawnDOPseudoclock(f'{name:s}__pseudoclock', self, '_')
@@ -250,63 +272,8 @@ class PrawnDODevice(PseudoclockDevice):
         group.create_dataset('reps_data', data=reps)
 
 
-class PrawnDO(IntermediateDevice):
-    description = "PrawnDO"
+class _PrawnDOIntermediateDevice(IntermediateDevice):
+    description = "PrawnDO Internal Intermediate Device"
 
     allowed_children = [Trigger]
-
-    @set_passed_properties(
-        property_names={
-            'connection_table_properties': [
-                'com_port',
-            ],
-            'device_properties': [
-                'clock_frequency',
-                'external_clock',
-            ]
-        }
-    )
-    def __init__(self, name, parent_device, com_port,
-                 clock_frequency = 100e6,
-                 external_clock = False,
-                 **kwargs):
-        """PrawnDO digital output device.
         
-        This labscript device provides general purpose digital outputs
-        using a Raspberry Pi Pico with custom firmware.
-
-        Args:
-            name (str): python variable name to assign to the PrawnDO
-            parent_device (:class:`~labscript.Device`): Device that will send the
-                starting hardware trigger.
-            com_port (str): COM port assinged to the PrawnDO by the OS.
-                Takes the form of `COMd` where `d` is an integer.
-            clock_frequency (float, optional): System clock frequency, in Hz.
-                Must be less than 133 MHz. Default is `100e6`.
-            external_clock (bool, optional): Whether to use an external clock.
-                Default is `False`.
-        """
-        
-        self.external_clock = external_clock
-        self.clock_frequency = clock_frequency
-
-        IntermediateDevice.__init__(self, f'{name:s}_dummy_parent', parent_device, **kwargs)
-
-        self._prawn_device = PrawnDODevice(f'{name:s}',
-                                           self, 'internal',
-                                           com_port,
-                                           clock_frequency,
-                                           external_clock)
-        
-    def add_device(self, device):
-
-        if isinstance(device, Trigger):
-            # the internal Trigger line for the PrawnDODevice
-            super().add_device(device)
-        elif isinstance(device, DigitalOut):
-            # pass Digital Outputs to PrawnDODevice
-            # this really shouldn't be used
-            self._prawn_device.add_device(device)
-        else:
-            raise LabscriptError(f"You have connected unsupported {device.name:s} (class {device.__class__}) "
-                                 f"to {self.name:s}")
