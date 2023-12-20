@@ -98,11 +98,11 @@ class PrawnDO(PseudoclockDevice):
     "Minimum resolvable unit of time, corresponsd to system clock period."
     minimum_duration = 50e-9
     "Minimum time between updates on the outputs."
-    wait_delay = 40e-9
+    wait_delay = 50e-9
     "Minimum required length of wait before a retrigger can be detected."
     input_response_time = 50e-9
     "Time between hardware trigger and output starting."
-    trigger_delay = input_response_time
+    trigger_delay = 50e-9 # TODO: gets applied twice on waits...
     trigger_minimum_duration = 160e-9
     "Minimum required duration of hardware trigger. A fairly large over-estimate."
 

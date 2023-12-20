@@ -31,6 +31,7 @@ class PrawnDOParser(object):
             self.trigger_delay = device_props['trigger_delay']
             self.wait_delay = device_props['wait_delay']
 
+            waits = f['waits'][()]
             group = f['devices/' + self.name]
 
             do_table = group['do_data'][()]
@@ -43,17 +44,14 @@ class PrawnDOParser(object):
         # re-add trigger delay
         trigger_index = 0
         t = 0 if clock is None else clock_ticks[trigger_index] + self.trigger_delay
-        trigger_index += 1
         time_deltas_table[0] += t
         # re-add wait delays (ignoring final one, which is from the 1st part of stop command)
         wait_idxs = np.nonzero(reps_table==0)[0][:-1]
         for wait_idx in wait_idxs:
             if clock is not None:
-                t = clock_ticks[trigger_index] + self.trigger_delay
-                trigger_index += 1
+                t = self.trigger_delay
             else:
-                t += self.wait_delay
-
+                t = self.wait_delay
             time_deltas_table[wait_idx] += t
         # insert t=0 for cumsum, remove final value (from stop instruction)
         times_table = np.cumsum(np.insert(time_deltas_table,0,0.0))[:-1]
