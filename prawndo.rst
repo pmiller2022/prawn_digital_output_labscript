@@ -77,6 +77,21 @@ An example connection table that uses the PrawnBlaster and PrawnDO:
 
         stop(1)
 
+.. note::
+
+    The PrawnDO is designed to be directly connected to a Clockline,
+    something not normally done for internally-timed devices in labscript.
+    This is merely for simplicity under the most typical use case of
+    adding standard digital output capability to a PrawnBlaster master pseudoclocking device.
+
+    When used in this way, the PrawnDO can share the Clockline with other devices
+    (especially with other PrawnDO boards!), but it is not advisable to share a Clockline
+    with devices that require many ticks (such as a DAQ).
+
+The PrawnDO can also be triggerd from a standard DigitalOut Trigger.
+In this case, the `clock_line` argument is not used,
+but the standard `trigger_device` and `trigger_connection` arguments.
+
 Synchronization
 ---------------
 
