@@ -31,7 +31,6 @@ class PrawnDOParser(object):
             self.trigger_delay = device_props['trigger_delay']
             self.wait_delay = device_props['wait_delay']
 
-            waits = f['waits'][()]
             group = f['devices/' + self.name]
 
             do_table = group['do_data'][()]
