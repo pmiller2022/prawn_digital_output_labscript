@@ -226,14 +226,17 @@ class PrawnDO(PseudoclockDevice):
         # collecting/consolidating the times when they change
         outputs = self.get_all_outputs()
         times = self.__pseudoclock.times[self.__clockline]
-
+        instructions = self.__pseudoclock.clock
         if len(times) == 0:
             # no instructions, so return
             return
-        
-        for output in outputs:
-            # Retrieving the time series of each DigitalOut to be stored
-            # as the output word for shifting to the pins
+
+        # get where wait instructions should be added from clock instructions
+        wait_idxs = [i for i,instr in enumerate(instructions) if instr=='WAIT']
+
+        # Retrieving the time series of each DigitalOut to be stored
+        # as the output word for the pins
+        for output in outputs:  
             output.make_timeseries(times)
             chan = output.connection.split(' ')[-1]
             bits[int(chan, 16)] = np.asarray(output.timeseries, dtype = np.uint16)
@@ -244,22 +247,18 @@ class PrawnDO(PseudoclockDevice):
         reps = np.rint(np.diff(times)/self.clock_resolution).astype(np.uint32)
         
         # add stop command sequence
+        # final output already in do_table
         reps = np.append(reps, 0) # causes last instruction to hold
         # next two indicate the stop
         do_table = np.append(do_table, 0) # this value is ignored
         reps = np.append(reps, 0)
 
-        # Looping through the waits given by the compiler's wait table to add 
-        # the wait instructions
-        for wait in compiler.wait_table: 
-            # Finding where the wait fits within the times array
-            index = np.searchsorted(times, wait)
-            # Inserting the wait into the output word table and the reps table
-            do_table = np.insert(do_table, index, do_table[index - 1])
-            reps = np.insert(reps, index, 0)
+        # Add in wait instructions to reps
+        # have output maintain previous output state during wait
+        reps = np.insert(reps, wait_idxs, 0)
+        do_table = np.insert(do_table, wait_idxs, do_table[wait_idxs])
 
-        # Raising an error if the user adds too many commands, currently maxed 
-        # at 23000
+        # Raising an error if the user adds too many commands
         if reps.size > self.max_instructions:
             raise LabscriptError (
                 "Too Many Commands"
