@@ -195,15 +195,23 @@ class PrawnDOWorker(Worker):
 
         # check if it is more efficient to fully refresh
         if not fresh and self.smart_cache['do_table'] is not None:
-            total_inst = len(reps)
-            new_inst = 0
-            for i, (output, rep) in enumerate(zip(do_table, reps)):
-                if i >= len(self.smart_cache['reps']):
-                    new_inst += len(reps) - len(self.smart_cache['reps'])
-                    break
-                elif (self.smart_cache['do_table'][i] != output or
-                    self.smart_cache['reps'][i] != rep):
-                    new_inst += 1
+            # get more convenient handles to smart cache arrays
+            curr_do = self.smart_cache['do_table']
+            curr_reps = self.smart_cache['reps']
+
+            # if arrays aren't of same shape, only compare up to smaller array size
+            n_curr = len(curr_reps)
+            n_new = len(reps)
+            if n_curr > n_new:
+                # technically don't need to reprogram current elements beyond end of new elements
+                new_inst = np.sum((curr_reps[:n_new] != reps) | (curr_do[:n_new] != do_table))
+            elif n_curr < n_new:
+                n_diff = n_new - n_curr
+                val_diffs = np.sum((curr_reps != reps[:n_curr]) | (curr_do != do_table[:n_curr]))
+                new_inst = val_diffs + n_diff
+            else:
+                new_inst = np.sum((curr_reps != reps) | (curr_do != do_table))
+
             if new_inst / total_inst > 0.1:
                 fresh = True
 
