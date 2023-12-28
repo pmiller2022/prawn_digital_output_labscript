@@ -1,163 +1,292 @@
 from blacs.tab_base_classes import Worker
 import labscript_utils.h5_lock, h5py
+import labscript_utils
+from labscript import LabscriptError
 import numpy as np
+import re
+import time
 
 class PrawnDOInterface(object):
     def __init__(self, com_port):
         global serial; import serial
+        global struct; import struct
 
-        self.timeout = 10
+        self.timeout = 0.5
         self.conn = serial.Serial(com_port, 10000000, timeout=self.timeout)
 
-        self.clear()
-        if not self.clear():
-            raise RuntimeError('Unable to communicate with PrawnDO Pico')
-
-    def clear(self):
-        '''Sends 'cls' command, w
+        ver = self.send_command('ver')
+        print(f'Connected: {ver:s}')
         
-        ch clears the currently stored run.
-        Returns response, throws serial exception on disconnect.'''
-        self.conn.write(b'cls\n')
-        # Note that read_until should read until the prompt, not newline
-        return self.conn.read_until(b'> ')
+    def send_command(self, command, readlines=False):
+        '''Sends the supplied string command and checks for a response.
+        
+        Automatically applies the correct termination characters.
+        
+        Args:
+            command (str): Command to send. Termination and encoding is done automatically.
+            readlines (bool, optional): Use pyserial's readlines functionality to read multiple
+                response lines. Slower as it relies on timeout to terminate reading.
 
-    def abort(self):
-        '''Sends 'abt' command, which stops the current run (or does nothing if no run).
-        Returns response, throws serial exception on disconnect.'''
-        self.conn.write(b'abt\n')
-        return self.conn.read_until(b'> ')
+        Returns:
+            str: String response from the PrawnDO
+        '''
+        command += '\r\n'
+        self.conn.write(command.encode())
 
-    def run(self):
-        '''Sends 'run' command, which starts the current run.
-        Returns response, throws serial exception on disconnect.'''
-        self.conn.write(b'run\n')
-        return self.conn.read_until(b'> ')
-
-    def dump(self):
-        '''Sends 'dmp' command, which dumps the currently loaded run.
-        Returns the dump of the run.'''
-        self.conn.write(b'dmp\n')
-        return self.conn.read_until(b'> ')
-    
-    def clock_external(self):
-        '''Sends 'run' command, which starts the current run.
-        Returns response, throws serial exception on disconnect.'''
-        self.conn.write(b'clk ext\n')
-        return self.conn.read_until(b'> ')
-    
-    def clock_internal(self):
-        '''Sends 'run' command, which starts the current run.
-        Returns response, throws serial exception on disconnect.'''
-        self.conn.write(b'clk int\n')
-        return self.conn.read_until(b'> ')
-    
-    def clock_set(self, frequency):
-        '''Sends 'run' command, which starts the current run.
-        Returns response, throws serial exception on disconnect.'''
-        self.conn.write(b'clk set ')
-
-        self.conn.write('d\n'.format(frequency).encode())
-        return self.conn.read_until(b'> ')
-    
-    def current(self):
-        '''Sends 'run' command, which starts the current run.
-        Returns response, throws serial exception on disconnect.'''
-        self.conn.write(b'cur\n')
-        return self.conn.read_until(b'> ')
-    
-    def version(self):
-        '''Sends 'run' command, which starts the current run.
-        Returns response, throws serial exception on disconnect.'''
-        self.conn.write(b'ver\n')
-        return self.conn.read_until(b'> ')
-
-    def add(self, bit_set, reps):
-        '''Sends 'add' command for a single set of output bits
-        Returns response, throws serial exception on disconnect.'''
-        self.conn.write('add\n'.encode())
-        self.conn.write('0x{:04x} '.format(bit_set).encode())
-        if reps == 0:
-            self.conn.write('0x{:08x} '.format(reps).encode())
-            self.conn.write('1\n'.encode())
+        if readlines:
+            resp = self.conn.readlines()
+            str_resp = ''.join([st.decode() for st in resp])
         else:
-            self.conn.write('0x{:08x}\n'.format(reps).encode())
-        self.conn.write('end\n'.encode())
-        return self.conn.read_until(b'> ')
-    
-    def edit(self, bit_set, reps):
-        '''Sends 'add' command for a single set of output bits
-        Returns response, throws serial exception on disconnect.'''
-        self.conn.write('edt\n'.encode())
-        self.conn.write('0x{:04x} '.format(bit_set).encode())
-         # Send bits as hex string
-        self.conn.write('0x{:08x}\n'.format(reps).encode()) # Send bits as hex string
-        return self.conn.read_until(b'> ')
+            str_resp = self.conn.readline().decode()
 
+        return str_resp
+    
+    def send_command_ok(self, command):
+        '''Sends the supplied string command and confirms 'ok' response.
+        '''
+
+        resp = self.send_command(command)
+        if resp != 'ok\r\n':
+            raise LabscriptError(f"Command '{command:s}' failed. Got response '{resp}'")
+    
+    def status(self):
+        '''Reads the status of the PrawnDO
+        
+        Returns:
+            (int, int): tuple containing
+
+                - **run-status** (int): Run status code
+                - **clock-status** (int): Clock status code
+        '''
+        resp = self.send_command('sts')
+        match = re.match(r"run-status:(\d) clock-status:(\d)(\r\n)?", resp)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+        else:
+            raise LabscriptError('PrawnDO invalid status, returned {resp}')
 
     def add_batch(self, bit_sets, reps):
         '''Sends 'add' commands for each bit_set in bit_sets list. Returns response.'''
         self.conn.write('add\n'.encode())
         for i in range(0, len(reps)):
-            self.conn.write('0x{:04x} '.format(bit_sets[i]).encode())
-            if reps == 0:
-                self.conn.write('0x{:08x} '.format(reps[i]).encode())
-                self.conn.write('1\n'.encode())
-            else:
-                self.conn.write('0x{:08x}\n'.format(reps[i]).encode())
+            self.conn.write('{:04x} '.format(bit_sets[i]).encode()) 
+            self.conn.write('{:08x}\n'.format(reps[i]).encode())
         self.conn.write('end\n'.encode())
-        return self.conn.read_until(b'> ')
+        resp = self.conn.readline().decode()
+        assert resp == 'ok\r\n', f'Program not written successfully, got response {resp}'
+
+    def adm_batch(self, bit_sets, reps):
+        '''Sends an 'adm' command for each bit_set in bit_sets list. Returns response.'''
+        self.conn.write('adm {:04x}\n'.format(len(reps)).encode())
+        serial_buffer = b''
+        for i in range(0, len(reps)):
+            serial_buffer += struct.pack('<H', bit_sets[i])
+            serial_buffer += struct.pack('<I', reps[i])
+        self.conn.write(serial_buffer)
+        resp = self.conn.readline().decode()
+        assert resp == 'ok\r\n', f'Program not written successfully, got response {resp}'
 
     def close(self):
         self.conn.close()
 
 class PrawnDOWorker(Worker):
     def init(self):
-        self.intf = PrawnDOInterface(self.com_port)
+        self.intf = PrawnDOInterface(self.com_port)        
+
+        self.smart_cache = {'do_table':None, 'reps':None}
+
+    def _dict_to_int(self, d):
+        """Converts dictionary of outputs to an integer mask.
+        
+        Args:
+            d (dict): Dictionary of output states
+
+        Returns:
+            int: Integer mask of the 16 output states.
+        """
+        val = 0
+        for conn, value in d.items():
+            val |= value << int(conn, 16)
+
+        return val
+    
+    def _int_to_dict(self, val):
+        """Converts an integer mask to a dictionary of outputs.
+        
+        Args:
+            val (int): 16-bit integer mask to convert
+            
+        Returns:
+            dict: Dictonary with output channels as keys and values are boolean states
+        """
+        return {hex(i):((val >> i) & 1) for i in range(16)}
+    
+    def check_status(self):
+        '''Checks operational status of the PrawnDO.
+
+        Automatically called by BLACS to update status.
+
+        Returns:
+            (int, int): Tuple containing:
+
+            - **run-status** (int): Possible values are:
+
+              * 0 : manual mode
+              * 1 : transitioning to buffered execution
+              * 2 : buffered execution
+              * 3 : abort requested
+              * 4 : aborting buffered execution
+              * 5 : last buffered execution aborted
+              * 6 : transitioning to manual mode
+
+            - **clock-status** (int): Possible values are:
+
+              * 0 : internal clock
+              * 1 : external clock
+        '''
+
+        return self.intf.status()
 
     def program_manual(self, front_panel_values):
-        self.intf.abort() # stop current run, if it is happening
-        self.intf.clear() # clear current Pi Pico buffer
+        """Change output states in manual mode.
+        
+        Returns:
+            dict: Output states after command execution.
+        """
+        value = self._dict_to_int(front_panel_values)
+        # send static state
+        self.intf.send_command_ok(f'man {value:04x}')
+        # confirm state set correctly
+        resp = self.intf.send_command('gto')
 
-        values = np.zeros(1, dtype=np.uint16) # Make 16 bit unsigned integer
-        for conn, value in front_panel_values.items():
-            # "Or" each bit from the front panel into the integer
-            values[0] |= value << (int(conn, 16))
-        # Send to the Pi Pico
-        #self.intf.add(0, 0)
-        self.intf.add(values[0], 0)
+        return self._int_to_dict(int(resp, 16))
+    
+    def check_remote_values(self):
+        """Checks the remote state of the PrawnDO.
+        
+        Called automatically by BLACS.
+        
+        Returns:
+            dict: Dictionary of the digital output states.
+        """
+        resp = self.intf.send_command('gto')
 
-        self.intf.run()
+        return self._int_to_dict(int(resp, 16))
 
     def transition_to_buffered(self, device_name, h5file, initial_values, fresh):
-        self.intf.abort() # stop current run, if it is happening
-        self.intf.clear() # clear current Pi Pico buffer
+
+        if fresh:
+            self.smart_cache = {'do_table':None, 'reps':None}
 
         with h5py.File(h5file, 'r') as hdf5_file:
             group = hdf5_file['devices'][device_name]
-            do_table = group['do_data']
-            reps = group['reps_data']
-            do_table = list(do_table)
-            reps = list(reps)
-            # The data "table" contains only a single column of integers, so just convert to list
-            # Need to append an initial zero, since first output occurs immediately (before trigger)
-            if len(reps) <= 23000:
-                self.intf.add_batch([0] + do_table, [0] + reps)
+            if 'do_data' not in group:
+                # if no output command, return
+                return
+            self.device_properties = labscript_utils.properties.get(
+                hdf5_file, device_name, "device_properties")
+            do_table = group['do_data'][()]
+            reps = group['reps_data'][()]
 
-        self.intf.run()
+        # configure clock from device properties
+        ext = self.device_properties['external_clock']
+        freq = self.device_properties['clock_frequency']
+        self.intf.send_command_ok(f"clk {ext:d} {freq:.0f}")
 
-        return {}
+        # check if it is more efficient to fully refresh
+        if not fresh and self.smart_cache['do_table'] is not None:
+            # get more convenient handles to smart cache arrays
+            curr_do = self.smart_cache['do_table']
+            curr_reps = self.smart_cache['reps']
+
+            # if arrays aren't of same shape, only compare up to smaller array size
+            n_curr = len(curr_reps)
+            n_new = len(reps)
+            if n_curr > n_new:
+                # technically don't need to reprogram current elements beyond end of new elements
+                new_inst = np.sum((curr_reps[:n_new] != reps) | (curr_do[:n_new] != do_table))
+            elif n_curr < n_new:
+                n_diff = n_new - n_curr
+                val_diffs = np.sum((curr_reps != reps[:n_curr]) | (curr_do != do_table[:n_curr]))
+                new_inst = val_diffs + n_diff
+            else:
+                new_inst = np.sum((curr_reps != reps) | (curr_do != do_table))
+
+            if new_inst / total_inst > 0.1:
+                fresh = True
+
+        # if fresh or not smart cache, program full table as a batch
+        # this is faster than going line by line
+        if fresh or self.smart_cache['do_table'] is None:
+            print('programming from scratch')
+            self.intf.send_command_ok('cls') # clear old program
+            self.intf.adm_batch(do_table, reps)
+            self.smart_cache['do_table'] = do_table
+            self.smart_cache['reps'] = reps
+        else:
+            print('incremental programming')
+            # only program table lines that have changed
+            for i, (output, rep) in enumerate(zip(do_table, reps)):
+                if i >= len(self.smart_cache['reps']):
+                    print(f'programming step {i}')
+                    self.intf.send_command_ok(f'set {i:x} {output:x} {rep:x}')
+                    self.smart_cache['do_table'][i] = output
+                    self.smart_cache['reps'][i] = rep
+
+                elif (self.smart_cache['do_table'][i] != output or
+                    self.smart_cache['reps'][i] != rep):
+
+                    print(f'programming step {i}')
+                    self.intf.send_command_ok(f'set {i:x} {output:x} {rep:x}')
+                    self.smart_cache['do_table'][i] = output
+                    self.smart_cache['reps'][i] = rep
+
+        final_values = self._int_to_dict(do_table[-1])
+
+        # start program, waiting for beginning trigger from parent
+        self.intf.send_command_ok('run')
+
+        return final_values
 
     def transition_to_manual(self):
-        return True
+        """Transition to manual mode after buffered execution completion.
+        
+        Returns:
+            bool: `True` if transition to manual is successful.
+        """
+        i = 0
+        while True:
+            run_status, _ = self.intf.status()
+            i += 1
+            if run_status == 0:
+                return True
+            elif i == 1000:
+                # program hasn't ended, probably bad triggering
+                # abort and raise an error
+                self.abort_buffered()
+                raise LabscriptError(f'PrawnDO did not end with status {run_status:d}. Is triggering working?')
+            elif run_status in [3,4,5]:
+                raise LabscriptError(f'PrawnDO returned status {run_status} in transition to manual')
 
     def abort_buffered(self):
-        self.intf.abort()
+        """Aborts a currently running buffered execution.
+        
+        Returns:
+            bool: `True` is abort was successful.
+        """
+        self.intf.send_command_ok('abt')
+        # loop until abort complete
+        while self.intf.status()[0] != 5:
+            time.sleep(0.5)
         return True
 
     def abort_transition_to_buffered(self):
-        self.intf.abort()
-        return True
+        """Aborts transition to buffered.
+        
+        Calls :meth:`abort_buffered`
+        """
+        return self.abort_buffered()
 
     def shutdown(self):
+        """Closes serial connection to PrawnDO"""
         self.intf.close()
