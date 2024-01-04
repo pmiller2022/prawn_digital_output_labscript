@@ -4,7 +4,7 @@ class PrawnDOTab(DeviceTab):
     def initialise_GUI(self):
         do_prop = {}
         for i in range(0, 16):
-            do_prop['0x{:01x}'.format(i)] = {}
+            do_prop['0x{:01X}'.format(i)] = {}
         self.create_digital_outputs(do_prop)
 
         _, _, do_widgets = self.auto_create_widgets()
