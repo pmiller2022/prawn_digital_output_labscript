@@ -195,6 +195,7 @@ class PrawnDOWorker(Worker):
 
         # check if it is more efficient to fully refresh
         if not fresh and self.smart_cache['do_table'] is not None:
+            total_inst = len(reps)
             # get more convenient handles to smart cache arrays
             curr_do = self.smart_cache['do_table']
             curr_reps = self.smart_cache['reps']
