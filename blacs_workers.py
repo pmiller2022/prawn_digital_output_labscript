@@ -78,11 +78,8 @@ class PrawnDOInterface(object):
     def adm_batch(self, bit_sets, reps):
         '''Sends an 'adm' command for each bit_set in bit_sets list. Returns response.'''
         self.conn.write('adm {:04x}\n'.format(len(reps)).encode())
-        serial_buffer = b''
-        for i in range(0, len(reps)):
-            serial_buffer += struct.pack('<H', bit_sets[i])
-            serial_buffer += struct.pack('<I', reps[i])
-        self.conn.write(serial_buffer)
+        data_array = np.array(list(zip(bit_sets, reps)), dtype=([('bit_sets', '<u2'), ('reps', '<u4')]))
+        self.conn.write(data_array.tobytes())
         resp = self.conn.readline().decode()
         assert resp == 'ok\r\n', f'Program not written successfully, got response {resp}'
 
