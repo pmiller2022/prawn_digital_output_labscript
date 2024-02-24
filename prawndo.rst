@@ -84,9 +84,14 @@ An example connection table that uses the PrawnBlaster and PrawnDO:
     This is merely for simplicity under the most typical use case of
     adding standard digital output capability to a PrawnBlaster master pseudoclocking device.
 
-    When used in this way, the PrawnDO can share the Clockline with other devices
-    (especially with other PrawnDO boards!), but it is not advisable to share a Clockline
-    with devices that require many ticks (such as a DAQ).
+    When used in this way, the PrawnDO can share the Clockline with other devices,
+    especially with other PrawnDO boards allowing for significant fan-out.
+    Nominally, the PrawnDO will ignore clock ticks from other devices on the same Clockline,
+    such as a DAQ.
+    However, standard cautions should be taken when sharing a clockline between devices
+    (i.e. don't overload the physical output driver with too many parallel devices, 
+    limit number of devices doing fast things at nearly the same times,
+    validate critical timings/operations independently). 
 
 The PrawnDO can also be triggerd from a standard DigitalOut Trigger.
 In this case, the `clock_line` argument is not used,
@@ -104,8 +109,8 @@ meaning drift could be as bad as 100 ppm between two devices
 (e.g. 100 microsecond drift after 1 second of run time).
 In practice, relative drift is often around 5 ppm.
 
-To overcome this, either use labscript waits right before sensitive operations
-to resynchronize back to with a single clock cycle (:math:`\pm10` ns),
+To overcome this, either use labscript waits right before time-sensitive operations
+to resynchronize back to within a single clock cycle (:math:`\pm10` ns),
 or use a common external clock for both devices.
 
 Unless buffering/level protecting circuitry is used,

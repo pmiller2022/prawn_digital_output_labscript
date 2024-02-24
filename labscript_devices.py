@@ -7,7 +7,6 @@ from labscript import (
     Trigger,
     bitfield,
     set_passed_properties,
-    compiler,
     LabscriptError
 )
 import numpy as np
