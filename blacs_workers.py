@@ -81,21 +81,10 @@ class PrawnDOInterface(object):
         else:
             raise LabscriptError('PrawnDO invalid status, returned {resp}')
 
-    def add_batch(self, bit_sets, reps):
-        '''Sends 'add' commands for each bit_set in bit_sets list. Returns response.'''
-        self.conn.write('add\n'.encode())
-        for i in range(0, len(reps)):
-            self.conn.write('{:04x} '.format(bit_sets[i]).encode()) 
-            self.conn.write('{:08x}\n'.format(reps[i]).encode())
-        self.conn.write('end\n'.encode())
-        resp = self.conn.readline().decode()
-        assert resp == 'ok\r\n', f'Program not written successfully, got response {resp}'
-
-    def adm_batch(self, bit_sets, reps):
+    def adm_batch(self, pulse_program):
         '''Sends an 'adm' command for each bit_set in bit_sets list. Returns response.'''
-        self.conn.write('adm {:04x}\n'.format(len(reps)).encode())
-        data_array = np.array(list(zip(bit_sets, reps)), dtype=([('bit_sets', '<u2'), ('reps', '<u4')]))
-        self.conn.write(data_array.tobytes())
+        self.conn.write('adm {:04x}\n'.format(len(pulse_program)).encode())
+        self.conn.write(pulse_program.tobytes())
         resp = self.conn.readline().decode()
         assert resp == 'ok\r\n', f'Program not written successfully, got response {resp}'
 
@@ -189,17 +178,16 @@ class PrawnDOWorker(Worker):
     def transition_to_buffered(self, device_name, h5file, initial_values, fresh):
 
         if fresh:
-            self.smart_cache = {'do_table':None, 'reps':None}
+            self.smart_cache = {'pulse_program':None}
 
         with h5py.File(h5file, 'r') as hdf5_file:
             group = hdf5_file['devices'][device_name]
-            if 'do_data' not in group:
-                # if no output command, return
+            if 'pulse_program' not in group:
+                # if no output commanded, return
                 return
             self.device_properties = labscript_utils.properties.get(
                 hdf5_file, device_name, "device_properties")
-            do_table = group['do_data'][()]
-            reps = group['reps_data'][()]
+            pulse_program = group['pulse_program'][()]
 
         # configure clock from device properties
         ext = self.device_properties['external_clock']
@@ -207,55 +195,51 @@ class PrawnDOWorker(Worker):
         self.intf.send_command_ok(f"clk {ext:d} {freq:.0f}")
 
         # check if it is more efficient to fully refresh
-        if not fresh and self.smart_cache['do_table'] is not None:
-            total_inst = len(reps)
-            # get more convenient handles to smart cache arrays
-            curr_do = self.smart_cache['do_table']
-            curr_reps = self.smart_cache['reps']
+        if not fresh and self.smart_cache['pulse_program'] is not None:
+
+            # get more convenient handle to smart cache array
+            curr_program = self.smart_cache['pulse_program']
 
             # if arrays aren't of same shape, only compare up to smaller array size
-            n_curr = len(curr_reps)
-            n_new = len(reps)
+            n_curr = len(curr_program)
+            n_new = len(pulse_program)
             if n_curr > n_new:
                 # technically don't need to reprogram current elements beyond end of new elements
-                new_inst = np.sum((curr_reps[:n_new] != reps) | (curr_do[:n_new] != do_table))
+                new_inst = np.sum(curr_program[:n_new] != pulse_program)
             elif n_curr < n_new:
                 n_diff = n_new - n_curr
-                val_diffs = np.sum((curr_reps != reps[:n_curr]) | (curr_do != do_table[:n_curr]))
+                val_diffs = np.sum(curr_program != pulse_program[:n_curr])
                 new_inst = val_diffs + n_diff
             else:
-                new_inst = np.sum((curr_reps != reps) | (curr_do != do_table))
+                new_inst = np.sum(curr_program != pulse_program)
 
-            if new_inst / total_inst > 0.1:
+            if new_inst / n_new > 0.1:
                 fresh = True
 
         # if fresh or not smart cache, program full table as a batch
         # this is faster than going line by line
-        if fresh or self.smart_cache['do_table'] is None:
+        if fresh or self.smart_cache['pulse_program'] is None:
             print('programming from scratch')
             self.intf.send_command_ok('cls') # clear old program
-            self.intf.adm_batch(do_table, reps)
-            self.smart_cache['do_table'] = do_table
-            self.smart_cache['reps'] = reps
+            self.intf.adm_batch(pulse_program)
+            self.smart_cache['pulse_program'] = pulse_program
         else:
             print('incremental programming')
             # only program table lines that have changed
-            for i, (output, rep) in enumerate(zip(do_table, reps)):
-                if i >= len(self.smart_cache['reps']):
+            n_cache = len(self.smart_cache['pulse_program'])
+            for i, instr in enumerate(pulse_program):
+                if i >= n_cache:
                     print(f'programming step {i}')
-                    self.intf.send_command_ok(f'set {i:x} {output:x} {rep:x}')
-                    self.smart_cache['do_table'][i] = output
-                    self.smart_cache['reps'][i] = rep
+                    self.intf.send_command_ok(f'set {i:x} {instr[0]:x} {instr[1]:x}')
+                    self.smart_cache['pulse_program'][i] = instr
 
-                elif (self.smart_cache['do_table'][i] != output or
-                    self.smart_cache['reps'][i] != rep):
+                elif (self.smart_cache['pulse_program'][i] != instr):
 
                     print(f'programming step {i}')
-                    self.intf.send_command_ok(f'set {i:x} {output:x} {rep:x}')
-                    self.smart_cache['do_table'][i] = output
-                    self.smart_cache['reps'][i] = rep
+                    self.intf.send_command_ok(f'set {i:x} {instr[0]:x} {instr[1]:x}')
+                    self.smart_cache['pulse_program'][i] = instr
 
-        final_values = self._int_to_dict(do_table[-1])
+        final_values = self._int_to_dict(pulse_program[-1][0])
 
         # start program, waiting for beginning trigger from parent
         self.intf.send_command_ok('run')
