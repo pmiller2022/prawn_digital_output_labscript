@@ -240,22 +240,22 @@ class PrawnDO(PseudoclockDevice):
             chan = output.connection.split(' ')[-1]
             bits[int(chan, 16)] = np.asarray(output.timeseries, dtype = np.uint16)
         # Merge list of lists into an array with a single 16 bit integer column
-        do_table = np.array(bitfield(bits, dtype=np.uint16))
+        bit_sets = np.array(bitfield(bits, dtype=np.uint16))
 
         # Now create the reps array (ie times between changes in number of clock cycles)
         reps = np.rint(np.diff(times)/self.clock_resolution).astype(np.uint32)
         
         # add stop command sequence
-        # final output already in do_table
+        # final output already in bit_sets
         reps = np.append(reps, 0) # causes last instruction to hold
         # next two indicate the stop
-        do_table = np.append(do_table, 0) # this value is ignored
+        bit_sets = np.append(bit_sets, 0) # this value is ignored
         reps = np.append(reps, 0)
 
         # Add in wait instructions to reps
         # have output maintain previous output state during wait
         reps = np.insert(reps, wait_idxs, 0)
-        do_table = np.insert(do_table, wait_idxs, do_table[wait_idxs])
+        bit_sets = np.insert(bit_sets, wait_idxs, bit_sets[wait_idxs])
 
         # Raising an error if the user adds too many commands
         if reps.size > self.max_instructions:
@@ -264,10 +264,13 @@ class PrawnDO(PseudoclockDevice):
             )
 
         group = hdf5_file['devices'].require_group(self.name)
-        # Adding the output word table and the reps table to the hdf5 file to
-        # be used by the blacs worker to execute the sequence
-        group.create_dataset('do_data', data=do_table)
-        group.create_dataset('reps_data', data=reps)
+        # combining reps and bit sets into single structured array for saving to hdf5 file
+        dtype = np.dtype([('bit_sets', '<u2'),
+                          ('reps', '<u4')])
+        pulse_program = np.zeros(len(reps), dtype=dtype)
+        pulse_program['bit_sets'] = bit_sets
+        pulse_program['reps'] = reps
+        group.create_dataset('pulse_program', data=pulse_program)
 
 
 class _PrawnDOIntermediateDevice(IntermediateDevice):
