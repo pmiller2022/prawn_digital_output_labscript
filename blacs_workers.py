@@ -59,6 +59,12 @@ class PrawnDOInterface(object):
     
     def send_command_ok(self, command):
         '''Sends the supplied string command and confirms 'ok' response.
+
+        Args:
+            command (str): String command to send.
+
+        Raises:
+            LabscriptError: If responds is not `ok\\r\\n`
         '''
 
         resp = self.send_command(command)
@@ -82,7 +88,12 @@ class PrawnDOInterface(object):
             raise LabscriptError('PrawnDO invalid status, returned {resp}')
 
     def adm_batch(self, pulse_program):
-        '''Sends an 'adm' command for each bit_set in bit_sets list. Returns response.'''
+        '''Sends pulse program as single binary block using `adm` command.
+        
+        Args:
+            pulse_program (numpy.ndarray): Structured array of program to send.
+                Must have first column as bit sets (<u2) and second as reps (<u4).
+        '''
         self.conn.write('adm {:04x}\n'.format(len(pulse_program)).encode())
         self.conn.write(pulse_program.tobytes())
         resp = self.conn.readline().decode()
@@ -219,12 +230,10 @@ class PrawnDOWorker(Worker):
         # if fresh or not smart cache, program full table as a batch
         # this is faster than going line by line
         if fresh or self.smart_cache['pulse_program'] is None:
-            print('programming from scratch')
             self.intf.send_command_ok('cls') # clear old program
             self.intf.adm_batch(pulse_program)
             self.smart_cache['pulse_program'] = pulse_program
         else:
-            print('incremental programming')
             # only program table lines that have changed
             n_cache = len(self.smart_cache['pulse_program'])
             for i, instr in enumerate(pulse_program):
