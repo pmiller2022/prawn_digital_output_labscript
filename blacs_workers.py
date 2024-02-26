@@ -7,6 +7,10 @@ import re
 import time
 
 class PrawnDOInterface(object):
+
+    min_version = (1, 2, 0)
+    """Minimum compatible firmware version tuple"""
+
     def __init__(self, com_port):
         global serial; import serial
         global struct; import struct
@@ -14,8 +18,20 @@ class PrawnDOInterface(object):
         self.timeout = 0.5
         self.conn = serial.Serial(com_port, 10000000, timeout=self.timeout)
 
-        ver = self.send_command('ver')
-        print(f'Connected: {ver:s}')
+        version = self.get_version()
+        print(f'Connected to version: {version}')
+        # ensure firmware is compatible
+        assert version >= self.min_version, f'Incompatible firmware, must be >= {self.min_version}'
+
+    def get_version(self):
+
+        self.conn.write(b'ver\r\n')
+        version_str = self.conn.readline().decode()
+        assert version_str.startswith("Version: ")
+        version = tuple(int(i) for i in version_str[9:].split('.'))
+        assert len(version) == 3
+
+        return version
         
     def send_command(self, command, readlines=False):
         '''Sends the supplied string command and checks for a response.
