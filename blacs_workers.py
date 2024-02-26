@@ -116,7 +116,7 @@ class PrawnDOWorker(Worker):
         Returns:
             dict: Dictonary with output channels as keys and values are boolean states
         """
-        return {hex(i):((val >> i) & 1) for i in range(16)}
+        return {f'0x{i:X}':((val >> i) & 1) for i in range(16)}
     
     def check_status(self):
         '''Checks operational status of the PrawnDO.
