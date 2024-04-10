@@ -15,13 +15,16 @@ class PrawnDOInterface(object):
         global serial; import serial
         global struct; import struct
 
-        self.timeout = 0.5
+        self.timeout = 0.2
         self.conn = serial.Serial(com_port, 10000000, timeout=self.timeout)
 
         version = self.get_version()
         print(f'Connected to version: {version}')
         # ensure firmware is compatible
         assert version >= self.min_version, f'Incompatible firmware, must be >= {self.min_version}'
+
+        current_status = self.status()
+        print(f'Current status is {current_status}')
 
     def get_version(self):
 
@@ -32,6 +35,14 @@ class PrawnDOInterface(object):
         assert len(version) == 3
 
         return version
+    
+    def _read_full_buffer(self):
+        '''Used to get any extra lines from device after a failed send_command'''
+
+        resp = self.conn.readlines()
+        str_resp = ''.join([st.decode() for st in resp])
+
+        return str_resp
         
     def send_command(self, command, readlines=False):
         '''Sends the supplied string command and checks for a response.
@@ -50,8 +61,7 @@ class PrawnDOInterface(object):
         self.conn.write(command.encode())
 
         if readlines:
-            resp = self.conn.readlines()
-            str_resp = ''.join([st.decode() for st in resp])
+            str_resp = self._read_full_buffer()
         else:
             str_resp = self.conn.readline().decode()
 
@@ -64,12 +74,14 @@ class PrawnDOInterface(object):
             command (str): String command to send.
 
         Raises:
-            LabscriptError: If responds is not `ok\\r\\n`
+            LabscriptError: If response is not `ok\\r\\n`
         '''
 
         resp = self.send_command(command)
         if resp != 'ok\r\n':
-            raise LabscriptError(f"Command '{command:s}' failed. Got response '{resp}'")
+            # get complete error message
+            resp += self._read_full_buffer()
+            raise LabscriptError(f"Command '{command:s}' failed. Got response '{repr(resp)}'")
     
     def status(self):
         '''Reads the status of the PrawnDO
@@ -79,13 +91,37 @@ class PrawnDOInterface(object):
 
                 - **run-status** (int): Run status code
                 - **clock-status** (int): Clock status code
+        
+        Raises:
+            LabscriptError: If response is not `ok\\r\\n`
         '''
         resp = self.send_command('sts')
         match = re.match(r"run-status:(\d) clock-status:(\d)(\r\n)?", resp)
         if match:
             return int(match.group(1)), int(match.group(2))
         else:
-            raise LabscriptError('PrawnDO invalid status, returned {resp}')
+            resp += self._read_full_buffer()
+            raise LabscriptError(f'PrawnDO invalid status, returned {repr(resp)}')
+        
+    def output_state(self):
+        '''Reads the current output state of the PrawnDO
+        
+        Returns:
+            int: Output state of all 16 bits
+        
+        Raises:
+            LabscriptError: If response is not `ok\\r\\n`
+        '''
+
+        resp = self.send_command('gto')
+
+        try:
+            resp_i = int(resp, 16)
+        except Exception as e:
+            resp += self._read_full_buffer()
+            raise LabscriptError(f'Remote value check failed. Got response {repr(resp)}') from e
+
+        return resp_i
 
     def adm_batch(self, pulse_program):
         '''Sends pulse program as single binary block using `adm` command.
@@ -97,7 +133,9 @@ class PrawnDOInterface(object):
         self.conn.write('adm {:04x}\n'.format(len(pulse_program)).encode())
         self.conn.write(pulse_program.tobytes())
         resp = self.conn.readline().decode()
-        assert resp == 'ok\r\n', f'Program not written successfully, got response {resp}'
+        if resp != 'ok\r\n':
+            resp += self._read_full_buffer()
+            raise LabscriptError(f'Program not written successfully, got response {repr(resp)}')
 
     def close(self):
         self.conn.close()
@@ -170,9 +208,9 @@ class PrawnDOWorker(Worker):
         # send static state
         self.intf.send_command_ok(f'man {value:04x}')
         # confirm state set correctly
-        resp = self.intf.send_command('gto')
+        resp_i = self.intf.output_state()
 
-        return self._int_to_dict(int(resp, 16))
+        return self._int_to_dict(resp_i)
     
     def check_remote_values(self):
         """Checks the remote state of the PrawnDO.
@@ -182,9 +220,10 @@ class PrawnDOWorker(Worker):
         Returns:
             dict: Dictionary of the digital output states.
         """
-        resp = self.intf.send_command('gto')
 
-        return self._int_to_dict(int(resp, 16))
+        resp_i = self.intf.output_state()       
+
+        return self._int_to_dict(resp_i)
 
     def transition_to_buffered(self, device_name, h5file, initial_values, fresh):
 
