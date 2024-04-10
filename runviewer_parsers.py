@@ -24,7 +24,7 @@ class PrawnDOParser(object):
                 clock_indices = np.insert(clock_indices, 0, 0)
             clock_ticks = times[clock_indices]
 
-        # Getting output words, and update times from the shot file
+        # Getting pulse_program from the shot file
         with h5py.File(self.path, "r") as f:
             device_props = properties.get(f, self.name, 'device_properties')
             self.clock_resolution = device_props['clock_resolution']
@@ -33,19 +33,17 @@ class PrawnDOParser(object):
 
             group = f['devices/' + self.name]
 
-            do_table = group['do_data'][()]
-            reps_table = group['reps_data'][()]
+            pulse_program = group['pulse_program'][()]
 
-        # remove final element from both do and reps (2nd part of stop instruction)
-        do_table = np.delete(do_table, -1)
-        reps_table = np.delete(reps_table, -1)
-        time_deltas_table = reps_table*self.clock_resolution
+        # remove final element from program (2nd part of stop instruction)
+        pulse_program = np.delete(pulse_program, -1)
+        time_deltas_table = pulse_program['reps']*self.clock_resolution
         # re-add trigger delay
         trigger_index = 0
         t = 0 if clock is None else clock_ticks[trigger_index] + self.trigger_delay
         time_deltas_table[0] += t
         # re-add wait delays (ignoring final one, which is from the 1st part of stop command)
-        wait_idxs = np.nonzero(reps_table==0)[0][:-1]
+        wait_idxs = np.nonzero(pulse_program['reps']==0)[0][:-1]
         for wait_idx in wait_idxs:
             if clock is not None:
                 t = self.trigger_delay
@@ -56,10 +54,10 @@ class PrawnDOParser(object):
         times_table = np.cumsum(np.insert(time_deltas_table,0,0.0))[:-1]
 
         
-        # convert do_table back to individual bits for each output
+        # convert bit sets back to individual bits for each output
         do_bitfield = np.fliplr( # reverse bit order for indexing by label
             np.unpackbits(
-                do_table.reshape(do_table.shape + (1,) # reshape so unpackbits does each number separate
+                pulse_program['bit_sets'].reshape(pulse_program.shape + (1,) # reshape so unpackbits does each number separate
                                  ).byteswap().view(np.uint8), # switch endianness, view at uint8 for unpackbits
                                  axis=1) # unpack along time axis
         )
