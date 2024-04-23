@@ -130,7 +130,7 @@ class PrawnDOInterface(object):
             pulse_program (numpy.ndarray): Structured array of program to send.
                 Must have first column as bit sets (<u2) and second as reps (<u4).
         '''
-        self.conn.write('adm {:04x}\n'.format(len(pulse_program)).encode())
+        self.conn.write('adm {:x}\n'.format(len(pulse_program)).encode())
         self.conn.write(pulse_program.tobytes())
         resp = self.conn.readline().decode()
         if resp != 'ok\r\n':
