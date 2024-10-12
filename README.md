@@ -1,5 +1,12 @@
 # Prawn Digital Output Labscript Driver
 
+# This is an old, archived repository where this code was originally developed: to use current version visit the Labscript repository and use the Labscript docs
+
+Labscript Repo: https://github.com/labscript-suite/labscript-devices
+Documentation: https://docs.labscriptsuite.org/projects/labscript-devices/en/latest/devices/prawndo/
+
+
+
 This program allows the [Prawn Digital Output](https://github.com/pmiller2022/prawn_digital_output/tree/main) Raspberry Pi Pico code to work with Labscript. This code was developed off the [labscript driver for digital outputs](https://github.com/carterturn/zwierlein_labscript_user_devices/tree/basis/prawn_do) developed by Carter Turnbaugh.
 
 The default PrawnDO takes a PseudoclockDevice as a parent and uses that as a trigger and to control. The LabscriptDevices code also contains a PrawnDOTrig which takes a DigitalOut or a trigger as a parent device.
