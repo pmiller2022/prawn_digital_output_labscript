@@ -1,10 +1,13 @@
 # Prawn Digital Output Labscript Driver
 
-# This is an old, archived repository where this code was originally developed: visit the Labscript repository and use the Labscript docs
+# This is an old, archived repository where this code was originally developed: visit the Labscript repository and use the Labscript docs to use this code
 
 Labscript Repo: https://github.com/labscript-suite/labscript-devices
 
 Documentation: https://docs.labscriptsuite.org/projects/labscript-devices/en/latest/devices/prawndo/
+
+
+
 
 
 
